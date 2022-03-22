@@ -33,7 +33,6 @@ func main() {
 				rcounter = 0
 			}
 			realresp, err := dns.Exchange(req, resolvers[rcounter])
-			resp = *realresp
 
 			if err != nil {
 				fmt.Printf("Got an error %s\n", err)
@@ -41,6 +40,7 @@ func main() {
 				return
 			}
 
+			resp = *realresp
 			fmt.Printf("Got a response %s\n", resp)
 			cache[hash] = resp
 		} else {
