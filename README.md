@@ -10,5 +10,6 @@ Known issues:
 TODO:
 1. Implement LRU cache
 2. Implement TTL
-3. Implement DoH
+3. Implement negative cache (after TTL)
+4. Implement DoH
 
