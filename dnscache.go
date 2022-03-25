@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -56,11 +57,37 @@ func (stats *requestStats) GetResolver() string {
 	return resolvers[index]
 }
 
+type Cache struct {
+	mu    *sync.RWMutex
+	cache map[uint64]*cacheExpEntry
+}
+
+func NewCache() Cache {
+	return Cache{
+		mu:    &sync.RWMutex{},
+		cache: make(map[uint64]*cacheExpEntry, 1000),
+	}
+}
+
+func (c Cache) Set(hash uint64, entry *cacheExpEntry) {
+	c.mu.Lock()
+	//fmt.Println("map update")
+	defer c.mu.Unlock()
+	c.cache[hash] = entry
+}
+
+func (c Cache) Get(hash uint64) (*cacheExpEntry, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	entry, ok := c.cache[hash]
+	return entry, ok
+}
+
 func main() {
 
 	stats := requestStats{0, 0, 0}
 
-	cache := make(map[uint64]*cacheExpEntry)
+	cache := NewCache()
 
 	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) {
 
@@ -69,14 +96,14 @@ func main() {
 			return
 		}
 
-		// fmt.Printf("Got a request for %s\n", req.Question[0])
+		fmt.Printf("Got a request for %s\n", req.Question[0])
 		stats.PrintStats()
 
 		stats.Total++
 
 		hash, _ := hashstructure.Hash(req.Question, hashstructure.FormatV2, nil)
 
-		resp, exists := cache[hash]
+		resp, exists := cache.Get(hash)
 
 		if !exists || resp.Expired() {
 			stats.Forwarded++
@@ -85,13 +112,13 @@ func main() {
 			if err != nil {
 				fmt.Printf("Got an error %s\n", err)
 				dns.HandleFailed(w, req)
-				cache[hash] = NewCacheEntry(nil)
+				cache.Set(hash, NewCacheEntry(nil))
 				return
 			}
 
 			resp = NewCacheEntry(realresp)
 
-			cache[hash] = resp
+			cache.Set(hash, resp)
 		} else {
 			stats.Cached += 1
 			if resp.Value == nil {
