@@ -17,10 +17,12 @@ type cacheExpEntry struct {
 
 func NewCacheEntry(msg *dns.Msg) *cacheExpEntry {
 	entry := new(cacheExpEntry)
-	if msg == nil {
+
+	entry.Value = msg
+	if msg.Rcode != dns.RcodeSuccess {
+		fmt.Printf("Negative cache for %s", msg)
 		// negative cache
 		entry.Expires = time.Now().Add(time.Second * 30)
-		entry.Value = nil
 	} else {
 		ttl := 86400
 		for _, answer := range msg.Answer {
@@ -29,7 +31,6 @@ func NewCacheEntry(msg *dns.Msg) *cacheExpEntry {
 			}
 		}
 		entry.Expires = time.Now().Add(time.Second * time.Duration(ttl))
-		entry.Value = msg
 	}
 
 	return entry
@@ -80,6 +81,16 @@ func (c Cache) Get(hash uint64) (*cacheExpEntry, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	entry, ok := c.cache[hash]
+	/*
+		We do not really need this - we are overwiting the expired entry later anyway.
+		So not doing this here gives us the same benefits, but one fewer write lock.
+		if ok && entry.Expired() {
+			ok = false
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			delete(c.cache, hash)
+		}
+	*/
 	return entry, ok
 }
 
@@ -96,7 +107,7 @@ func main() {
 			return
 		}
 
-		fmt.Printf("Got a request for %s\n", req.Question[0])
+		//fmt.Printf("Got a request for %s\n", req.Question[0])
 		stats.PrintStats()
 
 		stats.Total++
@@ -112,7 +123,8 @@ func main() {
 			if err != nil {
 				fmt.Printf("Got an error %s\n", err)
 				dns.HandleFailed(w, req)
-				cache.Set(hash, NewCacheEntry(nil))
+				// Do not cache error reponse - this is not a DNS error, it is a timeout.
+				// cache.Set(hash, NewCacheEntry(nil))
 				return
 			}
 
@@ -121,12 +133,6 @@ func main() {
 			cache.Set(hash, resp)
 		} else {
 			stats.Cached += 1
-			if resp.Value == nil {
-				dns.HandleFailed(w, req)
-				fmt.Printf("Negative cache for %s\n", req.Question[0])
-				return
-			}
-
 			resp.Value.Id = req.Id
 		}
 
