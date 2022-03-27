@@ -5,6 +5,7 @@ go 1.17
 require (
 	github.com/miekg/dns v1.1.47
 	github.com/mitchellh/hashstructure/v2 v2.0.2
+	github.com/hashicorp/golang-lru v0.5.4 
 )
 
 require (
