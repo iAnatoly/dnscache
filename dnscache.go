@@ -3,9 +3,9 @@ package main
 import (
 	"fmt"
 	"log"
-	"sync"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru"
 	"github.com/miekg/dns"
 	"github.com/mitchellh/hashstructure/v2"
 )
@@ -20,8 +20,8 @@ func NewCacheEntry(msg *dns.Msg) *cacheExpEntry {
 
 	entry.Value = msg
 	if msg.Rcode != dns.RcodeSuccess {
-		fmt.Printf("Negative cache for %s", msg)
 		// negative cache
+		fmt.Printf("Negative cache for %s", msg.Question)
 		entry.Expires = time.Now().Add(time.Second * 30)
 	} else {
 		ttl := 86400
@@ -48,7 +48,7 @@ type requestStats struct {
 
 func (stats *requestStats) PrintStats() {
 	if stats.Total%10 == 1 {
-		fmt.Printf("Cache hit ratio is %.2f\n", float64(stats.Cached)/float64(stats.Total))
+		fmt.Printf("Cache hit ratio is %.2f for %d total queries\n", float64(stats.Cached)/float64(stats.Total), stats.Total)
 	}
 }
 
@@ -59,46 +59,35 @@ func (stats *requestStats) GetResolver() string {
 }
 
 type Cache struct {
-	mu    *sync.RWMutex
-	cache map[uint64]*cacheExpEntry
+	cache *lru.Cache
 }
 
-func NewCache() Cache {
+func NewCache(size int) Cache {
+	lruCache, _ := lru.New(size)
 	return Cache{
-		mu:    &sync.RWMutex{},
-		cache: make(map[uint64]*cacheExpEntry, 1000),
+		cache: lruCache,
 	}
 }
 
 func (c Cache) Set(hash uint64, entry *cacheExpEntry) {
-	c.mu.Lock()
-	//fmt.Println("map update")
-	defer c.mu.Unlock()
-	c.cache[hash] = entry
+	if c.cache.Contains(hash) {
+		c.cache.Remove(hash)
+	}
+	c.cache.Add(hash, entry)
 }
 
 func (c Cache) Get(hash uint64) (*cacheExpEntry, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	entry, ok := c.cache[hash]
-	/*
-		We do not really need this - we are overwiting the expired entry later anyway.
-		So not doing this here gives us the same benefits, but one fewer write lock.
-		if ok && entry.Expired() {
-			ok = false
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			delete(c.cache, hash)
-		}
-	*/
-	return entry, ok
+	entry, ok := c.cache.Get(hash)
+	if ok {
+		return entry.(*cacheExpEntry), true
+	}
+	return nil, false
 }
 
 func main() {
 
 	stats := requestStats{0, 0, 0}
-
-	cache := NewCache()
+	cache := NewCache(10000)
 
 	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) {
 
@@ -123,7 +112,7 @@ func main() {
 			if err != nil {
 				fmt.Printf("Got an error %s\n", err)
 				dns.HandleFailed(w, req)
-				// Do not cache error reponse - this is not a DNS error, it is a timeout.
+				// Do not cache error response - this is not a DNS error, it is a timeout.
 				// cache.Set(hash, NewCacheEntry(nil))
 				return
 			}
