@@ -52,10 +52,23 @@ func (stats *requestStats) PrintStats() {
 	}
 }
 
-func (stats *requestStats) GetResolver() string {
+func (stats *requestStats) Resolve(req *dns.Msg) (*dns.Msg, error) {
+	var realresp *dns.Msg
+	var err error
+	var i int64
+
 	resolvers := []string{"8.8.8.8:53", "8.8.4.4:53", "1.1.1.1:53"}
-	index := stats.Total % int64(len(resolvers))
-	return resolvers[index]
+	resLen := int64(len(resolvers))
+
+	for i = 0; i < resLen; i++ {
+		index := (stats.Total + i) % resLen
+		realresp, err = dns.Exchange(req, resolvers[index])
+		if err == nil {
+			return realresp, nil
+		}
+		fmt.Printf("error: %s", err.Error())
+	}
+	return realresp, err
 }
 
 type Cache struct {
@@ -107,10 +120,10 @@ func main() {
 
 		if !exists || resp.Expired() {
 			stats.Forwarded++
-			realresp, err := dns.Exchange(req, stats.GetResolver())
+			realresp, err := stats.Resolve(req)
 
 			if err != nil {
-				fmt.Printf("Got an error %s\n", err)
+				fmt.Printf("Got a final error %s\n", err.Error())
 				dns.HandleFailed(w, req)
 				// Do not cache error response - this is not a DNS error, it is a timeout.
 				// cache.Set(hash, NewCacheEntry(nil))
